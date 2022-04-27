@@ -1,17 +1,20 @@
 model: 'DarkNet53_YOLOv3'
 dataset_name: 'Pascal'
-classes: 20
+classes: 3
 in_channels: 3
-train_path: '/mnt/det_train'
-val_path: '/mnt/det_valid'
-names: '/dataset/detection/names/pascal_voc.txt'
+# train_path: 'D:/datasets/voc/yolo_format/train'
+# val_path: 'D:/datasets/voc/yolo_format/val'
+# names: 'D:/datasets/voc/yolo_format/voc.names'
+train_path: './data'
+val_path: './data'
+names: './data/test.names'
 input_size: 416
 
-workers: 4
+workers: 2
 epochs: 500
-batch_size: 8
+batch_size: 4
 
-save_freq: 1
+save_freq: 5
 save_dir: './saved'
 gpus: -1
 

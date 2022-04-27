@@ -43,7 +43,7 @@ def train(cfg, ckpt=None):
     backbone = get_model(cfg['backbone'])
     model = YOLOv3(Backbone=backbone, num_classes=cfg['classes'], in_channels=cfg['in_channels'], varient=cfg['varient'])
     model_module = Detector(model, cfg, epoch_length=data_module.train_dataloader().__len__())
-
+    
     callbacks = [
         LearningRateMonitor(logging_interval='step'),
         ModelCheckpoint(monitor='val_loss', save_last=True, every_n_epochs=cfg['save_freq']),

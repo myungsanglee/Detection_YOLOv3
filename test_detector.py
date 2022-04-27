@@ -3,6 +3,8 @@ import cv2
 import random
 import argparse
 import numpy as np
+import albumentations
+import albumentations.pytorch
 
 import torch
 from torchsummary import summary
@@ -13,10 +15,14 @@ from utils.module_select import get_model
 from utils.utility import preprocess_input
 from utils.yaml_helper import get_train_configs
 from utils.nms import non_max_suppression
+from utils.metric import MeanAveragePrecision
+from torch.utils.data import Dataset, DataLoader
+from dataset.detection.utils import collater
+from dataset.detection.yolo_format import YoloDataset
 
 
 def parse_names(names_file):
-    names_file = os.getcwd()+names_file
+    # names_file = os.getcwd()+names_file
     with open(names_file, 'r') as f:
         return f.read().splitlines()
 
@@ -73,14 +79,39 @@ def decode_boxes(input, anchors, num_classes, image_size):
 
 
 def main(cfg, image_name, save):
+    input_size = cfg['input_size']
+    test_transform = albumentations.Compose([
+        albumentations.Resize(input_size, input_size, always_apply=True),
+        albumentations.Normalize(0, 1),
+        albumentations.pytorch.ToTensorV2(),
+    ], bbox_params=albumentations.BboxParams(format='yolo', min_visibility=0.1))
+
+    data_loader = DataLoader(YoloDataset(
+            transforms=test_transform,
+            path=cfg['val_path']),
+            batch_size=1,
+            shuffle=False,
+            collate_fn=collater
+    )
+    for sample in data_loader:
+        batch_x = sample['img']
+        batch_y = sample['annot']
+        
+        print(f'batch_x: {batch_x.size()}')
+        print(f'batch_y: {batch_y.size()}')
+        
+        break
+    
     names = parse_names(cfg['names'])
     colors = gen_random_colors(names)
 
     # Preprocess Image
     image = cv2.imread(image_name)
     image = cv2.resize(image, (416, 416))
-    image_inp = preprocess_input(image)
-    image_inp = image_inp.unsqueeze(0)
+    image_2 = image.copy()
+    # image_inp = preprocess_input(image)
+    # image_inp = image_inp.unsqueeze(0)
+    image_inp = batch_x
     if torch.cuda.is_available:
         image_inp=image_inp.cuda()
 
@@ -91,17 +122,29 @@ def main(cfg, image_name, save):
         model = model.to('cuda')
 
     model_module = Detector.load_from_checkpoint(
-        '/home/insig/Detection_YOLOv3/saved/DarkNet53_YOLOv3_Pascal/version_0/checkpoints/last.ckpt', model=model)
+        # '/home/insig/Detection_YOLOv3/saved/DarkNet53_YOLOv3_Pascal/version_0/checkpoints/last.ckpt', 
+        './saved/DarkNet53_YOLOv3_Pascal/version_0/checkpoints/epoch=234-step=234.ckpt', 
+        # './saved/DarkNet53_YOLOv3_Pascal/version_1/checkpoints/epoch=494-step=494.ckpt', 
+        model=model
+    )
     model_module.eval()
     preds = model_module(image_inp)
     decoded = []
     for i, pred in enumerate(preds):
-        decoded.append(decode_boxes(pred, pascal_voc['anchors'][i], pascal_voc['classes'], [cfg['input_size'], cfg['input_size']]))
+        # decoded.append(decode_boxes(pred, pascal_voc['anchors'][i], pascal_voc['classes'], [cfg['input_size'], cfg['input_size']]))
+        decoded.append(decode_boxes(pred, pascal_voc['anchors'][i], cfg['classes'], [cfg['input_size'], cfg['input_size']]))
     output = torch.cat(decoded, 1)
     batch_detections = non_max_suppression(output, num_classes=cfg['classes'], nms_thres=0.45)
     
+    map_metric = MeanAveragePrecision(cfg['classes'], pascal_voc['anchors'], cfg['input_size'])
+    map_metric.update_state(batch_y, preds)
+    map = map_metric.result()
+    print(f'mAP: {map}')
+    print(f'{map_metric._input_size}')
+    
     for i, detections in enumerate(batch_detections):
         if detections is not None:
+            print(f'\n\n{detections.size()}\n\n')
             unique_labels = detections[:, -1].cpu().unique()
             n_cls_preds = len(unique_labels)
             bbox_colors = random.sample(colors, n_cls_preds)
@@ -116,10 +159,11 @@ def main(cfg, image_name, save):
                 x2 = int((x2 / pre_w) * ori_w)
                 # Create a Rectangle patch
                 image = cv2.rectangle(image, (x1, y1), (x2, y2), color, 2)
-            # cv2.imshow("dkdk", image)
-            # cv2.waitKey(0)
-            cv2.imwrite("./inference/result/inference.png", image)
-    
+                
+            cv2.imshow("dkdk", image)
+            cv2.waitKey(0)
+            # cv2.imwrite("./inference/result/inference.png", image)
+    cv2.destroyAllWindows()
     
 
 
@@ -132,4 +176,5 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
     cfg = get_train_configs(args.cfg)
-    main(cfg, './inference/sample/test.jpg', args.save)
+    # main(cfg, './inference/sample/test.jpg', args.save)
+    main(cfg, './data/test.jpg', args.save)
